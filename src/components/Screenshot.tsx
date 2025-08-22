@@ -3,10 +3,27 @@ import { useState } from "react";
 export default function Screenshot() {
   const [screenshot, setScreenshot] = useState<string | null>(null);
 
-  const captureScreenVideo = () => {
-    chrome.tabs.captureVisibleTab(null, { format: "png" }, (image) => {
-      setScreenshot(image);
-    });
+  const captureScreenVideo = async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (image) => {
+          if (chrome.runtime.lastError) {
+            console.error(chrome.runtime.lastError);
+            return;
+          }
+          setScreenshot(image);
+          // Store screenshot in localStorage and open preview route in new tab
+          if (image) {
+            localStorage.setItem("screenshot-preview", image);
+            const extensionUrl = chrome.runtime.getURL("src/popup/index.html#/preview");
+            chrome.tabs.create({ url: extensionUrl });
+          }
+        });
+      }
+    } catch (error) {
+      console.error("Failed to capture screenshot:", error);
+    }
   };
 
   const downloadScreenshot = async () => {
@@ -20,17 +37,27 @@ export default function Screenshot() {
   };
 
   return (
-    <div>
-      <h2>Screenshot Capturing</h2>
-      <button onClick={captureScreenVideo}>Capture Screenshot</button>
+    <div className="p-6 min-w-80">
+      <h2 className="text-2xl font-bold mb-6 text-gray-800">Screenshot Capturing</h2>
+      <button 
+        onClick={captureScreenVideo}
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors duration-200 mb-4"
+      >
+        Capture Screenshot
+      </button>
       {screenshot && (
-        <div>
+        <div className="mt-4">
           <img
             src={screenshot}
             alt="Screenshot"
-            style={{ width: "100%", margin: "10px 0" }}
+            className="w-full rounded-lg shadow-md mb-4"
           />
-          <button onClick={downloadScreenshot}>Download Screenshot</button>
+          <button 
+            onClick={downloadScreenshot}
+            className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+          >
+            Download Screenshot
+          </button>
         </div>
       )}
     </div>

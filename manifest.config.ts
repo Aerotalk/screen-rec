@@ -20,6 +20,9 @@ export default defineManifest({
     'tabs',
     'activeTab',
     'tabCapture',
+    'scripting',
+    'storage',
+    'desktopCapture'
   ],
   content_scripts: [{
     js: ['src/content/main.tsx'],

@@ -24,6 +24,10 @@ export default defineManifest({
     'storage',
     'desktopCapture'
   ],
+  host_permissions: [
+    "http://*/*",
+    "https://*/*"
+  ],
   content_scripts: [{
     js: ['src/content/main.tsx'],
     matches: ['https://*/*'],

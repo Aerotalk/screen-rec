@@ -11,6 +11,17 @@ export default function ScreenRecording() {
 
   const startRecording = async () => {
     setError(null);
+    
+    // Check if we're in an extension context
+    if (!chrome?.desktopCapture) {
+      setError("Desktop capture API not available. Make sure this is running as a Chrome extension.");
+      return;
+    }
+    
+    // Check if webkitGetUserMedia is available
+    console.log("webkitGetUserMedia available:", !!(navigator as any).webkitGetUserMedia);
+    console.log("getUserMedia available:", !!navigator.mediaDevices?.getUserMedia);
+    
     try {
       // Get the current tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -23,28 +34,67 @@ export default function ScreenRecording() {
       
       // Use Chrome's desktopCapture API for extensions
       chrome.desktopCapture.chooseDesktopMedia(['screen', 'window', 'tab'], tab, async (streamId) => {
+        console.log('chooseDesktopMedia callback called with streamId:', streamId);
+        
         if (!streamId) {
-          setError('Screen capture was cancelled or failed');
-          console.error('No streamId received');
+          const lastError = chrome.runtime.lastError;
+          if (lastError) {
+            console.error('Desktop capture error:', lastError);
+            setError(`Desktop capture failed: ${lastError.message}`);
+          } else {
+            setError('Screen capture was cancelled by user');
+          }
           return;
         }
 
         console.log('Got streamId:', streamId);
 
         try {
-          // Get the media stream using the streamId
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: streamId
-            } as any,
+          // For Chrome extensions, use proper constraints format
+          const constraints: MediaStreamConstraints = {
             video: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: streamId,
-              maxWidth: 1920,
-              maxHeight: 1080
-            } as any
-          });
+              // @ts-ignore - Chrome extension specific properties
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: streamId,
+                maxWidth: window.screen.width,
+                maxHeight: window.screen.height
+              }
+            },
+            audio: false // Set to true if you want to capture audio as well
+          };
+
+          console.log('Requesting media with constraints:', constraints);
+          
+          let stream: MediaStream;
+          
+          // Use webkitGetUserMedia for better Chrome extension compatibility
+          if ((navigator as any).webkitGetUserMedia) {
+            stream = await new Promise<MediaStream>((resolve, reject) => {
+              (navigator as any).webkitGetUserMedia(
+                constraints,
+                (stream: MediaStream) => {
+                  console.log('webkitGetUserMedia success:', stream);
+                  resolve(stream);
+                },
+                (error: any) => {
+                  console.error('webkitGetUserMedia error:', error);
+                  reject(error);
+                }
+              );
+            });
+          } else {
+            // Fallback to standard getUserMedia if webkitGetUserMedia is not available
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                // @ts-ignore - Chrome extension specific properties
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: streamId,
+                maxWidth: window.screen.width,
+                maxHeight: window.screen.height
+              } as MediaTrackConstraints
+            });
+          }
 
           console.log('Got media stream:', stream);
           streamRef.current = stream;
@@ -105,9 +155,32 @@ export default function ScreenRecording() {
             setRecordingTime(prev => prev + 1);
           }, 1000);
 
-        } catch (error) {
+        } catch (error: any) {
           console.error("Failed to get media stream:", error);
-          setError("Failed to start recording. Please try again.");
+          console.error("Error details:", {
+            name: error?.name,
+            message: error?.message,
+            constraint: error?.constraint,
+            constraintName: error?.constraintName
+          });
+          
+          let errorMessage = "Failed to start recording: ";
+          
+          if (error?.name === 'NotAllowedError') {
+            errorMessage += "Permission denied. Please allow screen sharing when prompted.";
+          } else if (error?.name === 'NotFoundError') {
+            errorMessage += "No screen capture source found.";
+          } else if (error?.name === 'NotSupportedError') {
+            errorMessage += "Screen recording is not supported in this browser.";
+          } else if (error?.name === 'SecurityError') {
+            errorMessage += "Security error. Make sure you're using the extension from a secure context.";
+          } else if (error?.message) {
+            errorMessage += error.message;
+          } else {
+            errorMessage += "Unknown error occurred.";
+          }
+          
+          setError(errorMessage);
         }
       });
 

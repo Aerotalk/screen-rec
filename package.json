@@ -1,5 +1,6 @@
 {
-  "name": "screen-rec",
+  "name": "screen-recorder",
+  "description": "A simple screen recorder extension for Chrome using React and Vite.",
   "type": "module",
   "version": "1.0.0",
   "private": true,

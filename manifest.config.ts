@@ -1,27 +1,24 @@
-import { defineManifest } from '@crxjs/vite-plugin'
-import pkg from './package.json'
+import { defineManifest } from "@crxjs/vite-plugin";
+import pkg from "./package.json";
 
 export default defineManifest({
   manifest_version: 3,
   name: pkg.name,
+  description: pkg.description,
   version: pkg.version,
   icons: {
-    48: 'public/logo.png',
+    48: "public/logo.png",
   },
   background: {
-    service_worker: 'src/background.ts',
+    service_worker: "src/background.ts",
+    type: "module",
   },
+  permissions: ["desktopCapture", "tabs", "activeTab", "storage"],
   action: {
-    default_icon: {
-      48: 'public/logo.png',
-    },
-    default_popup: 'src/popup/index.html',
+    default_popup: "src/popup/index.html",
+    default_title: "Screen Recorder",
   },
-  permissions: [
-    'tabs',
-    'activeTab',
-    'tabCapture',
-    'storage',
-    'desktopCapture'
-  ],
-})
+  content_security_policy: {
+    extension_pages: "script-src 'self'; object-src 'self'",
+  },
+});

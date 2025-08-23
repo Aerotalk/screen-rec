@@ -5,115 +5,172 @@ export default function ScreenRecording() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
 
   const startRecording = async () => {
     setError(null);
+    setIsStarting(true);
+    
     try {
-      // Get the current tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) {
-        setError("Could not get current tab");
-        return;
-      }
-
-      console.log('Starting desktop capture...');
+      console.log('Popup: Checking if chrome.runtime is available:', !!chrome.runtime);
+      console.log('Popup: Sending message to background script...');
       
-      // Use Chrome's desktopCapture API for extensions
-      chrome.desktopCapture.chooseDesktopMedia(['screen', 'window', 'tab'], tab, async (streamId) => {
-        if (!streamId) {
-          setError('Screen capture was cancelled or failed');
-          console.error('No streamId received');
+      // Send message to background script to handle desktop capture
+      chrome.runtime.sendMessage({ action: 'startRecording' }, (response) => {
+        console.log('Popup: Received response from background:', response);
+        setIsStarting(false);
+        
+        if (chrome.runtime.lastError) {
+          console.error('Popup: Runtime error:', chrome.runtime.lastError);
+          setError(`Extension error: ${chrome.runtime.lastError.message}`);
           return;
         }
-
-        console.log('Got streamId:', streamId);
-
-        try {
-          // Get the media stream using the streamId
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: streamId
-            } as any,
-            video: {
-              chromeMediaSource: 'desktop',
-              chromeMediaSourceId: streamId,
-              maxWidth: 1920,
-              maxHeight: 1080
-            } as any
-          });
-
-          console.log('Got media stream:', stream);
-          streamRef.current = stream;
-          
-          // Check if we can use vp9, fallback to vp8 or default
-          let mimeType = 'video/webm';
-          if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
-            mimeType = 'video/webm;codecs=vp9';
-          } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-            mimeType = 'video/webm;codecs=vp8';
-          }
-
-          console.log('Using mimeType:', mimeType);
-
-          const mediaRecorder = new MediaRecorder(stream, { mimeType });
-          mediaRecorderRef.current = mediaRecorder;
-
-          const chunks: Blob[] = [];
-
-          mediaRecorder.ondataavailable = (event) => {
-            console.log('Data available:', event.data.size);
-            if (event.data.size > 0) {
-              chunks.push(event.data);
-            }
-          };
-
-          mediaRecorder.onstop = () => {
-            console.log('Recording stopped, creating blob...');
-            const blob = new Blob(chunks, { type: 'video/webm' });
-            const videoUrl = URL.createObjectURL(blob);
-            setRecording(videoUrl);
-            
-            // Store recording in localStorage and open preview
-            localStorage.setItem("recording-preview", videoUrl);
-            const extensionUrl = chrome.runtime.getURL("src/popup/index.html#/recording-preview");
-            chrome.tabs.create({ url: extensionUrl });
-          };
-
-          mediaRecorder.onerror = (event) => {
-            console.error('MediaRecorder error:', event);
-            setError('Recording failed');
-            stopRecording();
-          };
-
-          // Handle stream ending
-          stream.getVideoTracks()[0].addEventListener('ended', () => {
-            console.log('Video track ended');
-            stopRecording();
-          });
-
-          console.log('Starting recording...');
-          mediaRecorder.start(1000); // Record in 1-second chunks
-          setIsRecording(true);
-          setRecordingTime(0);
-
-          // Start timer
-          timerRef.current = setInterval(() => {
-            setRecordingTime(prev => prev + 1);
-          }, 1000);
-
-        } catch (error) {
-          console.error("Failed to get media stream:", error);
-          setError("Failed to start recording. Please try again.");
+        
+        if (!response || !response.success) {
+          const errorMsg = response?.error || 'Failed to start recording';
+          console.error('Popup: Recording failed:', errorMsg);
+          setError(errorMsg);
+          return;
         }
+        
+        console.log('Popup: Got streamId from background:', response.streamId);
+        
+                 // Now try to get the media stream
+         startMediaCapture(response.streamId);
+      });
+      
+    } catch (error) {
+      console.error("Popup: Failed to send message:", error);
+      setError("Failed to communicate with extension. Please reload.");
+      setIsStarting(false);
+    }
+  };
+
+  const startMediaCapture = async (streamId: string) => {
+    try {
+      console.log('Popup: Starting media capture with streamId:', streamId);
+      
+      const constraints = {
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: streamId
+          }
+        }
+      } as any;
+      
+      console.log('Popup: getUserMedia constraints:', constraints);
+      
+      let stream: MediaStream;
+      
+      // Try the modern API first
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (modernError) {
+        console.warn('Popup: Modern getUserMedia failed, trying legacy method:', modernError);
+        
+        // Fallback to legacy getUserMedia
+        const legacyGetUserMedia = (navigator as any).webkitGetUserMedia || 
+                                 (navigator as any).mozGetUserMedia || 
+                                 (navigator as any).getUserMedia;
+        
+        if (legacyGetUserMedia) {
+          stream = await new Promise<MediaStream>((resolve, reject) => {
+            legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+          });
+        } else {
+          throw modernError;
+        }
+      }
+
+      console.log('Popup: Got media stream:', stream);
+      streamRef.current = stream;
+      
+      // Check if we can use vp9, fallback to vp8 or default
+      let mimeType = 'video/webm';
+      if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+        mimeType = 'video/webm;codecs=vp8';
+      }
+
+      console.log('Popup: Using mimeType:', mimeType);
+
+      let mediaRecorder: MediaRecorder;
+      
+      try {
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        mediaRecorderRef.current = mediaRecorder;
+      } catch (error) {
+        console.error('Popup: Failed to create MediaRecorder:', error);
+        // Try without mimeType as fallback
+        try {
+          mediaRecorder = new MediaRecorder(stream);
+          mediaRecorderRef.current = mediaRecorder;
+          console.log('Popup: MediaRecorder created without mimeType');
+        } catch (fallbackError) {
+          console.error('Popup: Failed to create MediaRecorder even without mimeType:', fallbackError);
+          setError('Failed to initialize recording. Please try again.');
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+      }
+
+      const chunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
+        console.log('Popup: Data available:', event.data.size);
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        console.log('Popup: Recording stopped, creating blob...');
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const videoUrl = URL.createObjectURL(blob);
+        setRecording(videoUrl);
+        
+        // Store recording in localStorage and open preview
+        localStorage.setItem("recording-preview", videoUrl);
+        const extensionUrl = chrome.runtime.getURL("src/popup/index.html#/recording-preview");
+        chrome.tabs.create({ url: extensionUrl });
+      };
+
+      mediaRecorder.onerror = (event: Event) => {
+        console.error('Popup: MediaRecorder error:', event);
+        setError('Recording failed');
+        stopRecording();
+      };
+
+      // Handle stream ending
+      stream.getVideoTracks()[0].addEventListener('ended', () => {
+        console.log('Popup: Video track ended');
+        stopRecording();
       });
 
+      console.log('Popup: Starting recording...');
+      mediaRecorder.start(1000); // Record in 1-second chunks
+      setIsRecording(true);
+      setRecordingTime(0);
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+
     } catch (error) {
-      console.error("Failed to start recording:", error);
-      setError("Failed to access screen capture. Please check permissions.");
+      console.error("Popup: Failed to get media stream:", error);
+      console.error("Popup: Error details:", {
+        name: (error as Error).name,
+        message: (error as Error).message,
+        stack: (error as Error).stack
+      });
+      setError(`Failed to start recording: ${(error as Error).message}`);
     }
   };
 
@@ -155,6 +212,8 @@ export default function ScreenRecording() {
     <div className="p-6 min-w-80">
       <h2 className="text-2xl font-bold mb-6 text-gray-800">Screen Recording</h2>
       
+
+      
       {error && (
         <div className="mb-4 p-3 bg-red-100 border border-red-300 rounded-lg text-red-700">
           {error}
@@ -164,9 +223,14 @@ export default function ScreenRecording() {
       {!isRecording ? (
         <button 
           onClick={startRecording}
-          className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors duration-200 mb-4"
+          disabled={isStarting}
+          className={`w-full font-semibold py-3 px-4 rounded-lg transition-colors duration-200 mb-4 ${
+            isStarting
+              ? 'bg-gray-400 cursor-not-allowed text-white'
+              : 'bg-red-600 hover:bg-red-700 text-white'
+          }`}
         >
-          Start Recording
+          {isStarting ? 'Starting...' : 'Start Recording'}
         </button>
       ) : (
         <div className="space-y-4">

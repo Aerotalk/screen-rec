@@ -3,6 +3,7 @@ import { Routes, Route } from "react-router";
 import MainApp from "@/components/MainApp";
 import ScreenshotPreview from "@/components/ScreenshotPreview";
 import RecordingPreview from "@/components/RecordingPreview";
+import VideoEditorTab from "@/content/views/VideoEditorTab";
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
       <Route path="/" element={<MainApp />} />
       <Route path="/preview" element={<ScreenshotPreview />} />
       <Route path="/recording-preview" element={<RecordingPreview />} />
+      <Route path="/video-editor" element={<VideoEditorTab />} />
     </Routes>
   );
 }
